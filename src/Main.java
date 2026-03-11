@@ -2,64 +2,89 @@ package BookMyStay;
 
 import java.util.*;
 
-// Custom Exception for Invalid Booking
-class InvalidBookingException extends Exception {
+// Booking Request Class
+class BookingRequest {
 
-    public InvalidBookingException(String message) {
-        super(message);
+    String guestName;
+    String roomType;
+
+    public BookingRequest(String guestName, String roomType) {
+        this.guestName = guestName;
+        this.roomType = roomType;
     }
 }
 
 
-// Booking Validator
-class InvalidBookingValidator {
+// Concurrent Booking Processor
+class ConcurrentBookingProcessor {
 
-    public static void validateRoomType(String roomType, Map<String, Integer> inventory)
-            throws InvalidBookingException {
-
-        if (!inventory.containsKey(roomType)) {
-            throw new InvalidBookingException("Invalid room type: " + roomType);
-        }
-
-        if (inventory.get(roomType) <= 0) {
-            throw new InvalidBookingException("No rooms available for: " + roomType);
-        }
-    }
-}
-
-
-// Booking Service
-class BookingService {
-
+    private Queue<BookingRequest> bookingQueue = new LinkedList<>();
     private Map<String, Integer> inventory = new HashMap<>();
 
-    public BookingService() {
+    public ConcurrentBookingProcessor() {
         inventory.put("Standard", 2);
         inventory.put("Deluxe", 1);
-        inventory.put("Suite", 0);
+        inventory.put("Suite", 1);
     }
 
-    public void processBooking(String guestName, String roomType) {
+    // Add booking request to queue
+    public synchronized void addBookingRequest(BookingRequest request) {
+        bookingQueue.add(request);
+        System.out.println(request.guestName + " requested " + request.roomType);
+    }
 
-        try {
+    // Process booking requests safely
+    public void processBookings() {
 
-            // Validate input
-            InvalidBookingValidator.validateRoomType(roomType, inventory);
+        while (true) {
 
-            // Update inventory safely
-            inventory.put(roomType, inventory.get(roomType) - 1);
+            BookingRequest request;
 
-            System.out.println("Booking confirmed for " + guestName +
-                    " | Room Type: " + roomType);
+            synchronized (this) {
 
-        } catch (InvalidBookingException e) {
+                if (bookingQueue.isEmpty()) {
+                    return;
+                }
 
-            System.out.println("Booking Failed: " + e.getMessage());
+                request = bookingQueue.poll();
+            }
+
+            allocateRoom(request);
+        }
+    }
+
+    // Critical section for allocation
+    private void allocateRoom(BookingRequest request) {
+
+        synchronized (this) {
+
+            int available = inventory.getOrDefault(request.roomType, 0);
+
+            if (available > 0) {
+
+                inventory.put(request.roomType, available - 1);
+
+                System.out.println(
+                        Thread.currentThread().getName() +
+                                " allocated " + request.roomType +
+                                " to " + request.guestName
+                );
+
+            } else {
+
+                System.out.println(
+                        Thread.currentThread().getName() +
+                                " failed booking for " + request.guestName +
+                                " (No rooms available)"
+                );
+            }
         }
     }
 
     public void showInventory() {
-        System.out.println("\nCurrent Inventory:");
+
+        System.out.println("\nFinal Inventory:");
+
         for (String room : inventory.keySet()) {
             System.out.println(room + " : " + inventory.get(room));
         }
@@ -71,20 +96,32 @@ public class UseCaseBookMyStay {
 
     public static void main(String[] args) {
 
-        BookingService service = new BookingService();
+        ConcurrentBookingProcessor processor = new ConcurrentBookingProcessor();
 
-        // Valid booking
-        service.processBooking("Alice", "Standard");
+        // Simulating multiple booking requests
+        processor.addBookingRequest(new BookingRequest("Alice", "Standard"));
+        processor.addBookingRequest(new BookingRequest("Bob", "Standard"));
+        processor.addBookingRequest(new BookingRequest("Charlie", "Deluxe"));
+        processor.addBookingRequest(new BookingRequest("David", "Suite"));
+        processor.addBookingRequest(new BookingRequest("Eva", "Standard"));
 
-        // Invalid room type
-        service.processBooking("Bob", "Luxury");
+        // Multiple threads processing bookings
+        Thread t1 = new Thread(() -> processor.processBookings(), "Thread-1");
+        Thread t2 = new Thread(() -> processor.processBookings(), "Thread-2");
+        Thread t3 = new Thread(() -> processor.processBookings(), "Thread-3");
 
-        // Room not available
-        service.processBooking("Charlie", "Suite");
+        t1.start();
+        t2.start();
+        t3.start();
 
-        // Another valid booking
-        service.processBooking("David", "Deluxe");
+        try {
+            t1.join();
+            t2.join();
+            t3.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
 
-        service.showInventory();
+        processor.showInventory();
     }
 }
